@@ -7,6 +7,8 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import NoSuchElementException
 from bs4 import BeautifulSoup
+import os
+import sqlite3
 import pickle
 import time
 import datetime
@@ -51,22 +53,24 @@ class ConstructCannabisLicenses(object):
     help = "Begin request to pull cannabis licenses"
 
     def __init__(self):
+        self.file_date_time = datetime.datetime.now().strftime('%Y_%m_%d_%H%M')
         self.url_prefix = 'https://aca5.accela.com'
         self.url = 'https://aca5.accela.com/bcc/Cap/CapHome.aspx?module=Licenses&ShowMyPermitList=N'
         self.start_date = None
         self.end_date = None
         self.list_of_licenses = []
-        self.text_filename = "list_of_permits.txt"
-        self.csv_filename = "cannabis_licenses.csv"
+        self.text_filename = "%s_list_of_permits.txt" % (self.file_date_time)
+        self.csv_filename = "2018_02_21_0210_cannabis_licenses.csv"
         self.csv_headers = [
             'date_added',
+            'status_date',
             'details_link',
             'permit_id',
             'permit_type',
             'legal_business_name',
             'expires_on',
             'status',
-            'status_date',
+            'expires_on',
             'license_address',
             'first_name',
             'last_name',
@@ -80,23 +84,42 @@ class ConstructCannabisLicenses(object):
             'notes',
         ]
 
-    def handle(self):
-        # logger.info("Beginning to scrape state licenses" % (len(self.list_of_licenses)))
-        # self.scrape()
-        # logger.info("Writing %s state licenses to a text file" % (len(self.list_of_licenses)))
-        # with open(self.text_filename, 'wb') as text_file:
-        #     pickle.dump(self.list_of_licenses, text_file)
-        with open (self.text_filename, 'rb') as pickle_file:
+    def pull_new_list_to_check(self):
+        logger.info("Beginning to scrape state licenses")
+        self.scrape()
+        logger.info("Writing %s state licenses to a text file" % (len(self.list_of_licenses)))
+        with open(self.text_filename, 'wb') as text_file:
+            pickle.dump(self.list_of_licenses, text_file)
+
+    def check_list_against_db(self):
+        with open ('2018_03_12_1136_list_of_permits.txt', 'rb') as pickle_file:
             self.list_of_licenses = pickle.load(pickle_file)
         logger.info("Found %s state licenses in the text file" % (len(self.list_of_licenses)))
-        with open(self.csv_filename, "wb") as csv_file:
-            logger.info("Creating %s" % (self.csv_filename))
-            csv_output = csvkit.writer(csv_file, delimiter=",", encoding="utf-8")
-            csv_output.writerow(self.csv_headers)
-            for i in self.list_of_licenses[1124:]:
-                obj = self.structure_data(i)
-                csv_output.writerow(obj)
-        logger.info("%s has been written" % (self.csv_filename))
+        conn = sqlite3.connect('cannabis_licenses.db')
+        with conn:
+            for i in self.list_of_licenses:
+                c = conn.cursor()
+                record = c.execute("SELECT * FROM _scraped_cannabis_licenses where permit_id=?", (i['permit_id'], )).fetchone()
+                if record:
+                    logger.info("Details for %s exist" % (i['permit_id']))
+                else:
+                    item = self.structure_data(i)
+                    try:
+                        c.execute("INSERT INTO _scraped_cannabis_licenses ('date_added', 'details_link', 'permit_id', 'permit_type', 'legal_business_name', 'expires_on', 'status', 'status_date', 'license_address', 'first_name', 'last_name', 'biz_name', 'biz_name_extra', 'biz_country', 'biz_phone', 'biz_email', 'org_structure', 'app_info_list', 'notes') VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", item)
+                        logger.info("writing %s to database" % (item[2]))
+                    except Exception, exception:
+                        error_output = "%s on %s" % (exception, item)
+                        # check_list_against_db 111
+                        logger.error(error_output)
+
+        # with open(self.csv_filename, "wb") as csv_file:
+        #     logger.info("Creating %s" % (self.csv_filename))
+        #     csv_output = csvkit.writer(csv_file, delimiter=",", encoding="utf-8")
+        #     csv_output.writerow(self.csv_headers)
+        #     for i in self.list_of_licenses[]:
+        #         obj = self.structure_data(i)
+        #         csv_output.writerow(obj)
+        # logger.info("%s has been written" % (self.csv_filename))
 
     def clear_loading_time(self, driver, seconds, element):
         wait = WebDriverWait(driver, seconds)
@@ -108,23 +131,30 @@ class ConstructCannabisLicenses(object):
         '''
         try:
             table = soup.find('table', class_='ACA_GridView ACA_Grid_Caption')
-            rows = table.find_all('tr', class_=['ACA_TabRow_Odd ACA_TabRow_Odd_FontSize', 'ACA_TabRow_Even ACA_TabRow_Even_FontSize'])
-            for row in rows:
-                tds = row.find_all("td")
-                data_dict = {}
-                data_dict['details_link'] = "%s%s" % (self.url_prefix, tds[1].find('a').get('href'))
-                data_dict['permit_id'] = tds[1].get_text(strip=True)
-                data_dict['permit_type'] = tds[2].get_text(strip=True)
-                data_dict['legal_business_name'] = tds[3].get_text(strip=True)
-                data_dict['expires_on'] = tds[4].get_text(strip=True)
-                data_dict['status'] = tds[5].get_text(strip=True)
-                data_dict['status_date'] = tds[6].get_text(strip=True)
-                data_dict['date_added'] = datetime.datetime.now()
-                data_dict['notes'] = []
-                self.list_of_licenses.append(data_dict)
         except Exception, exception:
             error_output = "%s" % (exception)
+            logger.error(error_output)
             return False
+        try:
+            rows = table.find_all('tr', class_=['ACA_TabRow_Odd ACA_TabRow_Odd_FontSize', 'ACA_TabRow_Even ACA_TabRow_Even_FontSize'])
+        except Exception, exception:
+            error_output = "%s" % (exception)
+            logger.error(error_output)
+            return False
+        for row in rows:
+            tds = row.find_all("td")
+            data_dict = {}
+            data_dict['status_date'] = tds[1].get_text(strip=True)
+            data_dict['details_link'] = "%s%s" % (self.url_prefix, tds[2].find('a').get('href'))
+            data_dict['permit_id'] = tds[2].get_text(strip=True)
+            data_dict['permit_type'] = tds[3].get_text(strip=True)
+            data_dict['legal_business_name'] = tds[4].get_text(strip=True)
+            data_dict['license_address'] = tds[5].get_text(strip=True)
+            data_dict['expires_on'] = tds[6].get_text(strip=True)
+            data_dict['status'] = tds[6].get_text(strip=True)
+            data_dict['date_added'] = datetime.datetime.now()
+            data_dict['notes'] = []
+            self.list_of_licenses.append(data_dict)
 
     def scrape(self):
         '''
@@ -150,6 +180,7 @@ class ConstructCannabisLicenses(object):
                 error_output = "%s" % (exception)
                 logger.info(error_output)
                 proceed = False
+        logger.info('finished scraping initial data')
         driver.quit()
 
     def structure_data(self, i):
@@ -175,7 +206,6 @@ class ConstructCannabisLicenses(object):
             i['notes'].append("additional details not available")
             logger.error(exception)
             driver.quit()
-            logger.info(i)
             return [
                 i['date_added'],
                 i['details_link'],
@@ -308,4 +338,5 @@ class ConstructCannabisLicenses(object):
 
 if __name__ == '__main__':
     task_run = ConstructCannabisLicenses()
-    task_run.handle()
+    # task_run.pull_new_list_to_check()
+    task_run.check_list_against_db()
