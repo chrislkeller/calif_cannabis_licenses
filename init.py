@@ -70,7 +70,7 @@ class ConstructCannabisLicenses(object):
             'legal_business_name',
             'expires_on',
             'status',
-            'expires_on',
+            'status_date',
             'license_address',
             'first_name',
             'last_name',
@@ -151,7 +151,7 @@ class ConstructCannabisLicenses(object):
             data_dict['legal_business_name'] = tds[4].get_text(strip=True)
             data_dict['license_address'] = tds[5].get_text(strip=True)
             data_dict['expires_on'] = tds[6].get_text(strip=True)
-            data_dict['status'] = tds[6].get_text(strip=True)
+            data_dict['status'] = tds[7].get_text(strip=True)
             data_dict['date_added'] = datetime.datetime.now()
             data_dict['notes'] = []
             self.list_of_licenses.append(data_dict)
@@ -204,6 +204,7 @@ class ConstructCannabisLicenses(object):
             i['org_structure'] = None
             i['app_info_list'] = None
             i['notes'].append("additional details not available")
+            i['notes'] = "|".join(i['notes'])
             logger.error(exception)
             driver.quit()
             return [
